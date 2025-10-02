@@ -1,6 +1,8 @@
 #!/bin/bash
 # migration_core.sh
-# Migration + verification using rsync with --partial --append-verify
+# Migration + verification using rsync with --partial --append-verify --itemize-changes
+# Logs are written per top-level folder for clarity
+# Summary report parses all logs
 
 SRC_DIR="$1"
 DST_DIR="$2"
@@ -14,7 +16,6 @@ fi
 mkdir -p "$LOG_DIR"
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-RSYNC_LOG="$LOG_DIR/rsync_$TIMESTAMP.log"
 VERIFY_LOG="$LOG_DIR/verify_$TIMESTAMP.log"
 SAMPLE_LOG="$LOG_DIR/sample_hash_$TIMESTAMP.log"
 SUMMARY_LOG="$LOG_DIR/summary_$TIMESTAMP.log"
@@ -22,21 +23,37 @@ SUMMARY_LOG="$LOG_DIR/summary_$TIMESTAMP.log"
 PARALLEL_JOBS=4
 SAMPLE_COUNT=20
 
-echo "===== Step 1: Rsync by top-level directories =====" | tee "$RSYNC_LOG"
+echo "===== Step 1: Rsync by top-level directories ====="
 
-# Sync directories in parallel
+# Array to track all per-folder logs
+folder_logs=()
+
+# Sync each top-level directory separately with GNU parallel
 find "$SRC_DIR" -mindepth 1 -maxdepth 1 -type d | \
-  parallel -j "$PARALLEL_JOBS" rsync -a --partial --append-verify {} "$DST_DIR" 2>&1 | tee -a "$RSYNC_LOG"
+  parallel -j "$PARALLEL_JOBS" '
+    dir_name=$(basename {})
+    dir_log="'"$LOG_DIR"'/rsync_${dir_name}_'"$TIMESTAMP"'.log"
+    echo ">> Syncing directory: $dir_name (log: $dir_log)"
+    rsync -a --partial --append-verify --itemize-changes \
+      --log-file="$dir_log" {} "'"$DST_DIR"'/"
+    echo "$dir_log"
+  ' | while read -r log; do folder_logs+=("$log"); done
 
 # Sync root-level files
-find "$SRC_DIR" -maxdepth 1 -type f | \
-  parallel -j "$PARALLEL_JOBS" rsync -a --partial --append-verify {} "$DST_DIR" 2>&1 | tee -a "$RSYNC_LOG"
+root_log="$LOG_DIR/rsync_root_$TIMESTAMP.log"
+folder_logs+=("$root_log")
+echo ">> Syncing root-level files (log: $root_log)"
+rsync -a --partial --append-verify --itemize-changes \
+  --log-file="$root_log" "$SRC_DIR"/ "$DST_DIR"/ \
+  --exclude='*/'
 
-echo "===== Step 2: Verification with rsync checksums =====" | tee "$VERIFY_LOG"
+echo "===== Step 2: Verification with rsync checksums ====="
 
-rsync -a --dry-run --checksum "$SRC_DIR"/ "$DST_DIR"/ 2>&1 | tee -a "$VERIFY_LOG"
+rsync -a --dry-run --checksum --itemize-changes \
+  "$SRC_DIR"/ "$DST_DIR"/ \
+  --log-file="$VERIFY_LOG"
 
-echo "===== Step 3: Optional sample hash verification =====" | tee "$SAMPLE_LOG"
+echo "===== Step 3: Optional sample hash verification ====="
 
 sample_files=$(find "$SRC_DIR" -type f | shuf -n "$SAMPLE_COUNT")
 mismatch_count=0
@@ -64,16 +81,19 @@ done
 echo "===== Step 4: Generate Summary Report =====" | tee "$SUMMARY_LOG"
 
 verify_mismatches=$(grep -c "^deleting " "$VERIFY_LOG")
-verify_diffs=$(grep -c "^>" "$VERIFY_LOG")
+verify_diffs=$(grep -c "^[><c]" "$VERIFY_LOG")
 
 {
   echo "===== Migration Summary ($TIMESTAMP) ====="
   echo "Source: $SRC_DIR"
   echo "Destination: $DST_DIR"
   echo ""
-  echo "Rsync Transfer Log:   $RSYNC_LOG"
-  echo "Rsync Verify Log:     $VERIFY_LOG"
-  echo "Sample Hash Log:      $SAMPLE_LOG"
+  echo "---- Per-folder rsync results ----"
+  for log in "${folder_logs[@]}"; do
+    folder_name=$(basename "$log" | sed -E "s/^rsync_(.+)_$TIMESTAMP\.log/\1/")
+    total_changes=$(grep -c "^[><c]" "$log")
+    echo "Folder [$folder_name]: $total_changes changes (see $log)"
+  done
   echo ""
   echo "---- Rsync Verify Results ----"
   echo "Files flagged for re-sync (differences): $verify_diffs"
