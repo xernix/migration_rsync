@@ -32,7 +32,13 @@ fi
 
 SUMMARY_LOG="$LOG_DIR/stats_${TIMESTAMP}.log"
 
-echo "===== Per-folder and Grand Total Stats =====" | tee "$SUMMARY_LOG"
+echo "==== Source directory tree ====" | tee "$SUMMARY_LOG"
+tree -L 1 /mnt/suppdoc/hrmis >> "$SUMMARY_LOG"
+
+echo "==== Destination directory tree ====" | tee -a "$SUMMARY_LOG"
+tree -L 1 /data/suppdoc/hrmis >> "$SUMMARY_LOG"
+
+echo "===== Per-folder and Grand Total Stats =====" | tee -a "$SUMMARY_LOG"
 echo "Processing logs for timestamp: $TIMESTAMP" | tee -a "$SUMMARY_LOG"
 
 total_new=0
