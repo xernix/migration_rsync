@@ -54,7 +54,7 @@ for log in "$LOG_DIR"/rsync_*_"$TIMESTAMP".log; do
     folder_name=$(basename "$log" | sed -E "s/^rsync_(.+)_${TIMESTAMP}\.log/\1/")
   fi
 
-  file_count=$(grep -E '^[^ ]*[>]f' "$log" | wc -l)
+  file_count=$(grep -c '>f' "$log")
   bytes=$(grep -Eo 'sent [0-9]+ bytes' "$log" | awk '{sum+=$2} END {print sum+0}')
   human_bytes=$(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B")
 
